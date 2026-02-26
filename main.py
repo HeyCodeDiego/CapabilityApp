@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Capabilidade – Relatório (Standalone, PyQt5)
-- Não carrega dados: tudo é inserido na interface.
-- Você define R (amostras) e K (tamanho do subgrupo), digita o grid R×K, informa LIE/LSE e exporta o PDF.
-- Arquivário automático:
-    - dados_editaveis/  → JSON (completo) + CSV (formato longo, editável no Excel)
-    - pdf/              → cópia do PDF
-    - arquivario_index.csv → histórico de relatórios
+Capabilidade – Relatório (Standalone, PyQt5) com:
+- Edição direta de R×K e LIE/LSE
+- Exportação de PDF + arquivário (JSON/CSV/PDF + índice)
+- Botão "Carregar..." para reabrir arquivos gerados pela própria aplicação (JSON/CSV),
+  editar e gerar novamente o relatório.
 
 Cálculos:
-- X̄(r), R(r), X̄̄, R̄, σ_within = R̄/d2(K), LICx/LSCx, LICr/LSCr (mesmas tabelas A2/D3/D4/d2 do seu pop-up).
-- Cp/Cpk com σ_within e Pp/Ppk com σ_overall (desvio-padrão de todas as observações).
+- X̄(r), R(r), X̄̄, R̄, σ_within = R̄/d2(K), LICx/LSCx, LICr/LSCr
+- Cp/Cpk com σ_within e Pp/Ppk com σ_overall (desvio-padrão das observações)
+
+Convenção idêntica ao seu pop-up:
+- Cartas X̄–R por amostra (linha), K = nº de colunas (tamanho do subgrupo),
+  constantes A2/D3/D4/d2 suportando K = 2..10 e 25.  (# ref: seu código)
 """
 
 import sys, os, math, tempfile, shutil, datetime, csv, json, re
@@ -33,12 +35,12 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 
 
-# === Constantes CEP por K (iguais às do seu pop-up X̄–R) ===
+# === Constantes CEP por K — mesmas do seu pop-up X̄–R (K=2..10 e 25) ===
 A2 = {2: 1.880, 3: 1.023, 4: 0.729, 5: 0.577, 6: 0.483, 7: 0.419, 8: 0.373, 9: 0.337, 10: 0.308, 25: 0.153}
 D3 = {2: 0.000, 3: 0.000, 4: 0.000, 5: 0.000, 6: 0.000, 7: 0.076, 8: 0.136, 9: 0.184, 10: 0.223, 25: 0.459}
 D4 = {2: 3.267, 3: 2.574, 4: 2.282, 5: 2.114, 6: 2.004, 7: 1.924, 8: 1.864, 9: 1.816, 10: 1.777, 25: 1.541}
 d2 = {2: 1.128, 3: 1.693, 4: 2.059, 5: 2.326, 6: 2.534, 7: 2.704, 8: 2.847, 9: 2.970, 10: 3.078, 25: 3.931}
-K_ALLOWED = sorted(A2.keys())  # K suportados (2..10 e 25)
+K_ALLOWED = sorted(A2.keys())  # K suportados: 2..10 e 25
 
 # === Pastas do Arquivário ===
 ARQ_ROOT = os.path.join(os.getcwd(), "Capabilidade_Arquivario")
@@ -217,8 +219,7 @@ def build_figures(stats):
 
 def export_pdf(figs, out_path, header):
     """
-    Salva figuras em PNG temporários e compõe um PDF A4 com cabeçalho.
-    Título alterado para 'Relatório de Capabilidade'.
+    Compõe PDF A4 com cabeçalho e as figuras. Título: 'Relatório de Capabilidade'.
     """
     tmpdir = tempfile.mkdtemp(prefix="capab_report_")
     try:
@@ -274,9 +275,9 @@ def save_editable_archive(title, timestamp, stats, samples):
     """
     Salva o relatório em formato editável:
       - JSON completo (metadados + matriz + métricas)
-      - CSV 'longo' (amostra, subgrupo, valor)
+      - CSV 'longo' (amostra;subgrupo;valor)
       - Atualiza o index CSV do arquivário
-    Retorna caminhos (json_path, csv_path, basename_sugerido).
+    Retorna (json_path, csv_path, base).
     """
     R = stats["R"]; K = stats["K"]
     lie = stats["lie"]; lse = stats["lse"]
@@ -286,7 +287,6 @@ def save_editable_archive(title, timestamp, stats, samples):
     json_path = os.path.join(ARQ_DATA, base + ".json")
     csv_path  = os.path.join(ARQ_DATA, base + ".csv")
 
-    # JSON completo
     payload = {
         "title": title,
         "timestamp": timestamp.strftime("%d/%m/%Y %H:%M:%S"),
@@ -298,12 +298,11 @@ def save_editable_archive(title, timestamp, stats, samples):
             "Cp": stats["Cp"], "Cpk": stats["Cpk"], "Pp": stats["Pp"], "Ppk": stats["Ppk"],
             "LICx": stats["LICx"], "LSCx": stats["LSCx"], "LICr": stats["LICr"], "LSCr": stats["LSCr"],
         },
-        "version": "capabilidade-standalone-1.0"
+        "version": "capabilidade-standalone-1.1"
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
-    # CSV 'longo'
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, delimiter=';')
         w.writerow(["amostra", "subgrupo", "valor"])
@@ -311,21 +310,18 @@ def save_editable_archive(title, timestamp, stats, samples):
             for c in range(K):
                 w.writerow([r + 1, c + 1, samples[r][c]])
 
-    # Atualiza índice
     need_header = not os.path.exists(ARQ_IDX)
     with open(ARQ_IDX, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f, delimiter=';')
         if need_header:
             w.writerow(["timestamp", "titulo", "R", "K", "LIE", "LSE", "json", "csv", "pdf"])
-        # pdf ficará vazio aqui; será preenchido após salvar o PDF (retorno em on_export_pdf)
         w.writerow([timestamp.strftime("%Y-%m-%d %H:%M:%S"), title, R, K, lie, lse, json_path, csv_path, ""])
     return json_path, csv_path, base
 
 
 def update_index_with_pdf(pdf_path, base_row_match):
     """
-    Abre o índice e escreve o caminho do PDF na última linha que bate com o 'base' gerado.
-    Simplesmente regrava o arquivo substituindo a célula 'pdf' vazia mais recente com esse base.
+    Atualiza a última linha compatível do índice, preenchendo a coluna PDF.
     """
     if not os.path.exists(ARQ_IDX):
         return
@@ -333,17 +329,13 @@ def update_index_with_pdf(pdf_path, base_row_match):
     with open(ARQ_IDX, "r", encoding="utf-8") as f:
         rows = [line.rstrip("\n") for line in f.readlines()]
 
-    # procura de trás pra frente a primeira linha que não é header e não tem pdf preenchido
     for i in range(len(rows) - 1, -1, -1):
         if i == 0:
-            # header
             break
         parts = rows[i].split(";")
         if len(parts) >= 9:
             json_path = parts[6]
             csv_path  = parts[7]
-            pdf_cell  = parts[8]
-            # tenta casar pela base do nome (sem extensão) contida no json ou csv
             if (base_row_match in os.path.basename(json_path)) or (base_row_match in os.path.basename(csv_path)):
                 parts[8] = pdf_path
                 rows[i] = ";".join(map(str, parts))
@@ -354,11 +346,74 @@ def update_index_with_pdf(pdf_path, base_row_match):
             f.write(r + "\n")
 
 
+def load_from_json(path):
+    """
+    Carrega um arquivo JSON gerado pela aplicação.
+    Retorna (title, R, K, lie, lse, samples).
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+    title = obj.get("title", "Estudo de Capabilidade")
+    R = int(obj.get("R", 0))
+    K = int(obj.get("K", 0))
+    lie = obj.get("lie", None)
+    lse = obj.get("lse", None)
+    samples = obj.get("samples", [])
+    if not samples or R <= 0 or K <= 0:
+        raise ValueError("JSON inválido: matriz/ dimensões ausentes.")
+    if any((len(row) != K) for row in samples):
+        raise ValueError("JSON inválido: linhas da matriz não têm K colunas.")
+    return title, R, K, lie, lse, samples
+
+
+def load_from_csv(path):
+    """
+    Carrega CSV 'longo' (amostra;subgrupo;valor) gerado pela aplicação.
+    Retorna (title, R, K, lie, lse, samples).
+    Observação: CSV não guarda LIE/LSE; retornará lie/lse como None.
+    """
+    data = []
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.reader(f, delimiter=';')
+        rows = list(reader)
+
+    # Ignora header se presente
+    start = 1 if rows and rows[0] and rows[0][0].lower() == "amostra" else 0
+    max_r, max_c = 0, 0
+    entries = []
+    for line in rows[start:]:
+        if len(line) < 3:
+            continue
+        try:
+            r = int(str(line[0]).strip())
+            c = int(str(line[1]).strip())
+            v = parse_float(line[2])
+        except Exception:
+            continue
+        entries.append((r, c, v))
+        max_r = max(max_r, r)
+        max_c = max(max_c, c)
+
+    if max_r <= 0 or max_c <= 0:
+        raise ValueError("CSV inválido ou vazio.")
+
+    samples = [[0.0 for _ in range(max_c)] for __ in range(max_r)]
+    for r, c, v in entries:
+        samples[r-1][c-1] = v
+
+    # Título a partir do nome do arquivo (opcional)
+    base = os.path.splitext(os.path.basename(path))[0]
+    title = re.sub(r"_R\d+_K\d+$", "", base).replace("_", " ")
+    title = title if title else "Estudo de Capabilidade (CSV)"
+
+    return title, max_r, max_c, None, None, samples
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Capabilidade – Relatório (PyQt5)")
-        self.resize(1000, 720)
+        self.resize(1100, 740)
 
         # ---- Painel superior ----
         top_box = QGroupBox("Parâmetros do Estudo (R×K)")
@@ -370,8 +425,9 @@ class MainWindow(QMainWindow):
         self.edt_LSE = QLineEdit(); self.edt_LSE.setPlaceholderText("LSE (max)"); self.edt_LSE.setFixedWidth(120)
 
         self.edt_title = QLineEdit(); self.edt_title.setPlaceholderText("Identificação (Produto / Plano / Item)")
-        self.btn_gen = QPushButton("Gerar grade")
-        self.btn_pdf = QPushButton("Exportar PDF")
+        self.btn_load = QPushButton("Carregar…")     # <<--- NOVO
+        self.btn_gen  = QPushButton("Gerar grade")
+        self.btn_pdf  = QPushButton("Exportar PDF")
 
         lay_top.addWidget(QLabel("Amostras (R):"))
         lay_top.addWidget(self.spin_R)
@@ -385,6 +441,7 @@ class MainWindow(QMainWindow):
         lay_top.addSpacing(16)
         lay_top.addWidget(QLabel("Identificação:"))
         lay_top.addWidget(self.edt_title, 1)
+        lay_top.addWidget(self.btn_load)  # <<--- NOVO
         lay_top.addWidget(self.btn_gen)
         lay_top.addWidget(self.btn_pdf)
 
@@ -392,17 +449,19 @@ class MainWindow(QMainWindow):
         self.table = QTableWidget()
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.AllEditTriggers)
-        self.table.installEventFilter(self)  # permite colar do Excel
+        self.table.installEventFilter(self)  # colar do Excel
 
         # ---- Layout principal ----
         central = QWidget()
         v = QVBoxLayout(central)
         v.addWidget(top_box)
-        v.addWidget(QLabel("Digite as medições no grid (aceita vírgula ou ponto)."))
+        v.addWidget(QLabel("Digite as medições no grid (aceita vírgula ou ponto). "
+                           "Use 'Carregar…' para reabrir um JSON/CSV do arquivário."))
         v.addWidget(self.table, 1)
         self.setCentralWidget(central)
 
         # ---- Sinais ----
+        self.btn_load.clicked.connect(self.on_load_editable)  # <<--- NOVO
         self.btn_gen.clicked.connect(self.generate_grid)
         self.btn_pdf.clicked.connect(self.on_export_pdf)
 
@@ -418,6 +477,18 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels([f"Sub {c+1}" for c in range(K)])
         self.table.setVerticalHeaderLabels([f"Amostra {r+1}" for r in range(R)])
         self.table.resizeColumnsToContents()
+
+    def fill_table(self, samples):
+        R = len(samples); K = len(samples[0]) if samples else 0
+        self.spin_R.setValue(R)
+        if str(K) in [self.cmb_K.itemText(i) for i in range(self.cmb_K.count())]:
+            self.cmb_K.setCurrentText(str(K))
+        else:
+            raise ValueError(f"K={K} não suportado. Suportados: {K_ALLOWED}")
+        self.generate_grid()
+        for r in range(R):
+            for c in range(K):
+                self.table.setItem(r, c, QTableWidgetItem(str(samples[r][c])))
 
     def read_matrix(self):
         R = self.table.rowCount()
@@ -437,6 +508,35 @@ class MainWindow(QMainWindow):
                 row.append(v)
             data.append(row)
         return data
+
+    def on_load_editable(self):
+        """
+        Abre JSON/CSV gerados pelo arquivário e preenche toda a UI (R, K, LIE, LSE, grid, título).
+        """
+        start_dir = ARQ_DATA if os.path.isdir(ARQ_DATA) else os.getcwd()
+        path, flt = QFileDialog.getOpenFileName(
+            self, "Carregar estudo (JSON/CSV)", start_dir, "Arquivos (*.json *.csv)"
+        )
+        if not path:
+            return
+        try:
+            if path.lower().endswith(".json"):
+                title, R, K, lie, lse, samples = load_from_json(path)
+                self.edt_title.setText(title)
+                self.fill_table(samples)
+                self.edt_LIE.setText("" if lie is None else f"{float(lie):.6f}")
+                self.edt_LSE.setText("" if lse is None else f"{float(lse):.6f}")
+            else:
+                title, R, K, lie, lse, samples = load_from_csv(path)
+                self.edt_title.setText(title)
+                self.fill_table(samples)
+                # CSV não carrega LIE/LSE
+                self.edt_LIE.clear()
+                self.edt_LSE.clear()
+                QMessageBox.information(self, "Carregar CSV",
+                    "O CSV foi carregado. Informe LIE e LSE antes de exportar o PDF.")
+        except Exception as ex:
+            QMessageBox.warning(self, "Carregar", f"Falha ao carregar: {ex}")
 
     def on_export_pdf(self):
         # Parâmetros
@@ -458,9 +558,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Grid", str(ex))
             return
 
-        # Estatísticas (mesma convenção X̄–R do seu pop-up: K = nº de colunas)
+        # Estatísticas (mesma convenção do seu sistema: K = nº de colunas)  # ref: seu código
         try:
-            stats = compute_stats(samples, lie=lie, lse=lse)  # ← mesma lógica do seu sistema [1](https://mahle-my.sharepoint.com/personal/diego_siste_barbosa_mahle_com/Documents/Arquivos%20de%20Microsoft%20Copilot%20Chat/Trace.txt)
+            stats = compute_stats(samples, lie=lie, lse=lse)
         except Exception as ex:
             QMessageBox.warning(self, "Cálculo", str(ex))
             return
@@ -469,33 +569,29 @@ class MainWindow(QMainWindow):
         timestamp = datetime.datetime.now()
         json_path, csv_path, base = save_editable_archive(title, timestamp, stats, samples)
 
-        # 2) Geração das figuras para o PDF
+        # 2) Figuras para o PDF
         figs = build_figures(stats)
 
-        # 3) Exportar PDF (pergunta caminho ao usuário) + arquivar cópia automática
+        # 3) Exportar PDF + arquivar cópia
         fn_sug = f"{base}.pdf"
         out_path, _ = QFileDialog.getSaveFileName(self, "Salvar PDF", fn_sug, "PDF (*.pdf)")
         if not out_path:
             return
 
-        # Cabeçalho (texto do relatório atualizado para 'Capabilidade')
         hdr = (f"{title}  |  R={stats['R']}  K={stats['K']}  |  "
                f"LIE={lie:.6f}  LSE={lse:.6f}  |  "
                f"Data: {timestamp.strftime('%d/%m/%Y %H:%M')}")
 
         try:
             export_pdf(figs, out_path, hdr)
-
             # Cópia para o arquivário/pdf
             pdf_archived = os.path.join(ARQ_PDF, os.path.basename(fn_sug))
             try:
                 shutil.copy2(out_path, pdf_archived)
             except Exception:
-                # caso usuário exporte com nome diferente, garante um nome no arquivário
                 pdf_archived = os.path.join(ARQ_PDF, os.path.basename(out_path))
                 shutil.copy2(out_path, pdf_archived)
-
-            # Atualiza o índice com caminho do PDF
+            # Índice
             update_index_with_pdf(pdf_archived, base)
 
             QMessageBox.information(
